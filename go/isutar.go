@@ -56,7 +56,7 @@ func starsPostHandler(w http.ResponseWriter, r *http.Request) {
 
 	origin := os.Getenv("ISUDA_ORIGIN")
 	if origin == "" {
-		origin = "http://localhost:5000"
+		origin = "http://localhost/"
 	}
 	u, err := r.URL.Parse(fmt.Sprintf("%s/keyword/%s", origin, pathURIEscape(keyword)))
 	panicIf(err)
