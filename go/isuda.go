@@ -17,6 +17,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/Songmu/strrand"
 	_ "github.com/go-sql-driver/mysql"
@@ -103,7 +104,8 @@ func topHandler(w http.ResponseWriter, r *http.Request) {
 	entries := make([]*Entry, 0, 10)
 	for rows.Next() {
 		e := Entry{}
-		err := rows.Scan(&e.ID, &e.AuthorID, &e.Keyword, &e.Description, &e.UpdatedAt, &e.CreatedAt)
+		var tmp int;
+		err := rows.Scan(&e.ID, &e.AuthorID, &e.Keyword, &e.Description, &e.UpdatedAt, &e.CreatedAt, &tmp)
 		panicIf(err)
 		e.Html = htmlify(w, r, e.Description)
 		e.Stars = loadStars(e.Keyword)
@@ -164,11 +166,11 @@ func keywordPostHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_, err := db.Exec(`
-		INSERT INTO entry (author_id, keyword, description, created_at, updated_at)
-		VALUES (?, ?, ?, NOW(), NOW())
+		INSERT INTO entry (author_id, keyword, description, created_at, updated_at, keyword_len)
+		VALUES (?, ?, ?, NOW(), NOW(), ?)
 		ON DUPLICATE KEY UPDATE
-		author_id = ?, keyword = ?, description = ?, updated_at = NOW()
-	`, userID, keyword, description, userID, keyword, description)
+		author_id = ?, keyword = ?, description = ?, updated_at = NOW(), keyword_len = ?
+	`, userID, keyword, description, utf8.RuneCountInString(keyword), userID, keyword, description, utf8.RuneCountInString(keyword))
 	panicIf(err)
 	http.Redirect(w, r, "/", http.StatusFound)
 }
@@ -257,7 +259,8 @@ func keywordByKeywordHandler(w http.ResponseWriter, r *http.Request) {
 	keyword := mux.Vars(r)["keyword"]
 	row := db.QueryRow(`SELECT * FROM entry WHERE keyword = ?`, keyword)
 	e := Entry{}
-	err := row.Scan(&e.ID, &e.AuthorID, &e.Keyword, &e.Description, &e.UpdatedAt, &e.CreatedAt)
+	var tmp int
+	err := row.Scan(&e.ID, &e.AuthorID, &e.Keyword, &e.Description, &e.UpdatedAt, &e.CreatedAt, tmp)
 	if err == sql.ErrNoRows {
 		notFound(w)
 		return
@@ -294,7 +297,8 @@ func keywordByKeywordDeleteHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	row := db.QueryRow(`SELECT * FROM entry WHERE keyword = ?`, keyword)
 	e := Entry{}
-	err := row.Scan(&e.ID, &e.AuthorID, &e.Keyword, &e.Description, &e.UpdatedAt, &e.CreatedAt)
+	var tmp int;
+	err := row.Scan(&e.ID, &e.AuthorID, &e.Keyword, &e.Description, &e.UpdatedAt, &e.CreatedAt, &tmp)
 	if err == sql.ErrNoRows {
 		notFound(w)
 		return
@@ -309,13 +313,14 @@ func htmlify(w http.ResponseWriter, r *http.Request, content string) string {
 		return ""
 	}
 	rows, err := db.Query(`
-		SELECT * FROM entry ORDER BY CHARACTER_LENGTH(keyword) DESC
+		SELECT * FROM entry ORDER BY keyword_len DESC
 	`)
 	panicIf(err)
 	entries := make([]*Entry, 0, 500)
 	for rows.Next() {
 		e := Entry{}
-		err := rows.Scan(&e.ID, &e.AuthorID, &e.Keyword, &e.Description, &e.UpdatedAt, &e.CreatedAt)
+		var tmp int;
+		err := rows.Scan(&e.ID, &e.AuthorID, &e.Keyword, &e.Description, &e.UpdatedAt, &e.CreatedAt, &tmp)
 		panicIf(err)
 		entries = append(entries, &e)
 	}
