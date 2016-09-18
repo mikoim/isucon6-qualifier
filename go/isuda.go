@@ -173,6 +173,12 @@ func keywordPostHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "SPAM!", http.StatusBadRequest)
 		return
 	}
+
+	/* Insert into cache first */
+	keywordCache.Set(keyword, 1)
+	pageCache = cmap.New()
+
+	/* Then insert into DB */
 	_, err := db.Exec(`
 		INSERT INTO entry (author_id, keyword, description, created_at, updated_at, keyword_len)
 		VALUES (?, ?, ?, NOW(), NOW(), ?)
@@ -181,8 +187,11 @@ func keywordPostHandler(w http.ResponseWriter, r *http.Request) {
 	`, userID, keyword, description, utf8.RuneCountInString(keyword), userID, keyword, description, utf8.RuneCountInString(keyword))
 	panicIf(err)
 
-	keywordCache.Set(keyword, 1)
-	pageCache = cmap.New()
+	/* キーワード追加のリクエストがスレッドAに割り振られ、その直後に
+	 * それを含むページを表示するリクエストが来た場合、キャッシュの
+	 * 更新は間に合うのか.
+	 */
+
 
 	http.Redirect(w, r, "/", http.StatusFound)
 }
