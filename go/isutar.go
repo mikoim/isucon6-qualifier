@@ -12,6 +12,9 @@ import (
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/gorilla/mux"
 	"github.com/unrolled/render"
+	"net"
+	"os/signal"
+	"syscall"
 )
 
 var (
@@ -113,5 +116,26 @@ func main() {
 	s.Methods("GET").HandlerFunc(myHandler(starsHandler))
 	s.Methods("POST").HandlerFunc(myHandler(starsPostHandler))
 
-	log.Fatal(http.ListenAndServe(":5001", r))
+	os.Remove("isutar.sock");
+
+	sock, err := net.Listen("unix", "isutar.sock")
+	checkErr(err)
+
+	checkErr(os.Chmod("isutar.sock", 0777))
+
+	defer sock.Close()
+
+	go func() {
+		log.Fatal(http.Serve(sock, r))
+	}()
+
+	c := make(chan os.Signal, 1)
+	signal.Notify(c, os.Interrupt, os.Kill, syscall.SIGTERM)
+	log.Println(<-c)
+}
+
+func checkErr(err error) {
+	if err != nil {
+		panic(err)
+	}
 }
