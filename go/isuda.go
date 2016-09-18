@@ -78,16 +78,44 @@ func authenticate(w http.ResponseWriter, r *http.Request) error {
 	return errInvalidUser
 }
 
+func initializeKeywordCache() {
+	keywordCache = cmap.New()
+
+	if keywordCache.Count() != 0 {
+		return
+	}
+
+	rows, err := db.Query(`	SELECT * FROM entry ORDER BY keyword_len DESC`)
+	panicIf(err)
+	entries := make([]*Entry, 0, 8000)
+	for rows.Next() {
+		e := Entry{}
+		var tmp int;
+		err := rows.Scan(&e.ID, &e.AuthorID, &e.Keyword, &e.Description, &e.UpdatedAt, &e.CreatedAt, &tmp)
+		panicIf(err)
+		entries = append(entries, &e)
+	}
+	rows.Close()
+
+	for _, entry := range entries {
+		keywordCache.Set(entry.Keyword, 1)
+	}
+}
+
+func isExistKeyword(keyword string) (bool){
+	_, exitst := keywordCache.Get(keyword)
+	return exitst
+}
+
 func initializeHandler(w http.ResponseWriter, r *http.Request) {
 	_, err := db.Exec(`DELETE FROM entry WHERE id > 7101`)
 	panicIf(err)
 
-	pageCache = cmap.New()
-	keywordCache = cmap.New()
-
-	resp, err := http.Get(fmt.Sprintf("%s/initialize", isutarEndpoint))
+	_, err = db.Exec("TRUNCATE star")
 	panicIf(err)
-	defer resp.Body.Close()
+
+	pageCache = cmap.New()
+	initializeKeywordCache()
 
 	re.JSON(w, http.StatusOK, map[string]string{"result": "ok"})
 }
@@ -348,26 +376,6 @@ func htmlify(w http.ResponseWriter, r *http.Request, content string) string {
 		return cachedPage.(string)
 	}
 
-	if keywordCache.Count() == 0 {
-		rows, err := db.Query(`
-		SELECT * FROM entry ORDER BY keyword_len DESC
-	`)
-		panicIf(err)
-		entries := make([]*Entry, 0, 500)
-		for rows.Next() {
-			e := Entry{}
-			var tmp int;
-			err := rows.Scan(&e.ID, &e.AuthorID, &e.Keyword, &e.Description, &e.UpdatedAt, &e.CreatedAt, &tmp)
-			panicIf(err)
-			entries = append(entries, &e)
-		}
-		rows.Close()
-
-		for _, entry := range entries {
-			keywordCache.Set(entry.Keyword, 1)
-		}
-	}
-
 	keywords := make([]string, 0, 500)
 
 	for _, keyword := range keywordCache.Keys() {
@@ -397,19 +405,8 @@ func htmlify(w http.ResponseWriter, r *http.Request, content string) string {
 	return result
 }
 
-func loadStars(keyword string) []*Star {
-	v := url.Values{}
-	v.Set("keyword", keyword)
-	resp, err := http.Get(fmt.Sprintf("%s/stars", isutarEndpoint) + "?" + v.Encode())
-	panicIf(err)
-	defer resp.Body.Close()
-
-	var data struct {
-		Result []*Star `json:result`
-	}
-	err = json.NewDecoder(resp.Body).Decode(&data)
-	panicIf(err)
-	return data.Result
+func loadStars(keyword string) *[]Star {
+	return getStars(keyword)
 }
 
 func isSpamContents(content string) bool {
@@ -536,19 +533,25 @@ func main() {
 	k.Methods("GET").HandlerFunc(myHandler(keywordByKeywordHandler))
 	k.Methods("POST").HandlerFunc(myHandler(keywordByKeywordDeleteHandler))
 
+	s := r.PathPrefix("/stars").Subrouter()
+	s.Methods("GET").HandlerFunc(myHandler(starsHandler))
+	s.Methods("POST").HandlerFunc(myHandler(starsPostHandler))
+
 	r.PathPrefix("/").Handler(http.FileServer(http.Dir("./public/")))
 
 	os.Remove("isuda.sock");
 
-	s, err := net.Listen("unix", "isuda.sock")
+	sock, err := net.Listen("unix", "isuda.sock")
 	checkErr(err)
 
 	checkErr(os.Chmod("isuda.sock", 0777))
 
-	defer s.Close()
+	defer sock.Close()
+
+	initializeKeywordCache()
 
 	go func() {
-		log.Fatal(http.Serve(s, r))
+		log.Fatal(http.Serve(sock, r))
 	}()
 
 	c := make(chan os.Signal, 1)
@@ -560,4 +563,48 @@ func checkErr(err error) {
 	if err != nil {
 		panic(err)
 	}
+}
+
+/**/
+
+func getStars(keyword string) (*[]Star) {
+	rows, err := db.Query(`SELECT * FROM star WHERE keyword = ?`, keyword)
+	if err != nil && err != sql.ErrNoRows {
+		panicIf(err)
+		return nil
+	}
+
+	stars := make([]Star, 0, 10)
+	for rows.Next() {
+		s := Star{}
+		err := rows.Scan(&s.ID, &s.Keyword, &s.UserName, &s.CreatedAt)
+		panicIf(err)
+		stars = append(stars, s)
+	}
+	rows.Close()
+
+	return &stars
+}
+
+func starsHandler(w http.ResponseWriter, r *http.Request) {
+	keyword := r.FormValue("keyword")
+
+	re.JSON(w, http.StatusOK, map[string][]Star{
+		"result": *getStars(keyword),
+	})
+}
+
+func starsPostHandler(w http.ResponseWriter, r *http.Request) {
+	keyword := r.FormValue("keyword")
+
+	if !isExistKeyword(keyword) {
+		notFound(w)
+		return
+	}
+
+	user := r.URL.Query().Get("user")
+	_, err := db.Exec(`INSERT INTO star (keyword, user_name, created_at) VALUES (?, ?, NOW())`, keyword, user)
+	panicIf(err)
+
+	re.JSON(w, http.StatusOK, map[string]string{"result": "ok"})
 }
