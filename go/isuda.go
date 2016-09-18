@@ -14,10 +14,12 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"regexp"
 	"strconv"
 	"strings"
 	"unicode/utf8"
+	"github.com/streamrail/concurrent-map"
+	"net/http/pprof"
+	"github.com/moovweb/rubex"
 
 	"github.com/Songmu/strrand"
 	_ "github.com/go-sql-driver/mysql"
@@ -30,6 +32,9 @@ const (
 	sessionName   = "isuda_session"
 	sessionSecret = "tonymoris"
 )
+
+var keywordCache = cmap.New()
+var pageCache = cmap.New()
 
 var (
 	isutarEndpoint string
@@ -73,6 +78,9 @@ func authenticate(w http.ResponseWriter, r *http.Request) error {
 func initializeHandler(w http.ResponseWriter, r *http.Request) {
 	_, err := db.Exec(`DELETE FROM entry WHERE id > 7101`)
 	panicIf(err)
+
+	pageCache = cmap.New()
+	keywordCache = cmap.New()
 
 	resp, err := http.Get(fmt.Sprintf("%s/initialize", isutarEndpoint))
 	panicIf(err)
@@ -172,6 +180,10 @@ func keywordPostHandler(w http.ResponseWriter, r *http.Request) {
 		author_id = ?, keyword = ?, description = ?, updated_at = NOW(), keyword_len = ?
 	`, userID, keyword, description, utf8.RuneCountInString(keyword), userID, keyword, description, utf8.RuneCountInString(keyword))
 	panicIf(err)
+
+	keywordCache.Set(keyword, 1)
+	pageCache = cmap.New()
+
 	http.Redirect(w, r, "/", http.StatusFound)
 }
 
@@ -305,6 +317,10 @@ func keywordByKeywordDeleteHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	_, err = db.Exec(`DELETE FROM entry WHERE keyword = ?`, keyword)
 	panicIf(err)
+
+	pageCache = cmap.New()
+	keywordCache.Remove(keyword)
+
 	http.Redirect(w, r, "/", http.StatusFound)
 }
 
@@ -312,30 +328,48 @@ func htmlify(w http.ResponseWriter, r *http.Request, content string) string {
 	if content == "" {
 		return ""
 	}
-	rows, err := db.Query(`
+
+	rawContent := content
+
+	cachedPage, cached := pageCache.Get(content)
+	if cached {
+		return cachedPage.(string)
+	}
+
+	if keywordCache.Count() == 0 {
+		rows, err := db.Query(`
 		SELECT * FROM entry ORDER BY keyword_len DESC
 	`)
-	panicIf(err)
-	entries := make([]*Entry, 0, 500)
-	for rows.Next() {
-		e := Entry{}
-		var tmp int;
-		err := rows.Scan(&e.ID, &e.AuthorID, &e.Keyword, &e.Description, &e.UpdatedAt, &e.CreatedAt, &tmp)
 		panicIf(err)
-		entries = append(entries, &e)
+		entries := make([]*Entry, 0, 500)
+		for rows.Next() {
+			e := Entry{}
+			var tmp int;
+			err := rows.Scan(&e.ID, &e.AuthorID, &e.Keyword, &e.Description, &e.UpdatedAt, &e.CreatedAt, &tmp)
+			panicIf(err)
+			entries = append(entries, &e)
+		}
+		rows.Close()
+
+		for _, entry := range entries {
+			keywordCache.Set(entry.Keyword, 1)
+		}
 	}
-	rows.Close()
 
 	keywords := make([]string, 0, 500)
-	for _, entry := range entries {
-		keywords = append(keywords, regexp.QuoteMeta(entry.Keyword))
+
+	for _, keyword := range keywordCache.Keys() {
+		keywords = append(keywords, rubex.QuoteMeta(keyword))
 	}
-	re := regexp.MustCompile("("+strings.Join(keywords, "|")+")")
+
+	re := rubex.MustCompile("("+strings.Join(keywords, "|")+")")
+
 	kw2sha := make(map[string]string)
 	content = re.ReplaceAllStringFunc(content, func(kw string) string {
 		kw2sha[kw] = "isuda_" + fmt.Sprintf("%x", sha1.Sum([]byte(kw)))
 		return kw2sha[kw]
 	})
+
 	content = html.EscapeString(content)
 	for kw, hash := range kw2sha {
 		u, err := r.URL.Parse(baseUrl.String()+"/keyword/" + pathURIEscape(kw))
@@ -343,7 +377,12 @@ func htmlify(w http.ResponseWriter, r *http.Request, content string) string {
 		link := fmt.Sprintf("<a href=\"%s\">%s</a>", u, html.EscapeString(kw))
 		content = strings.Replace(content, hash, link, -1)
 	}
-	return strings.Replace(content, "\n", "<br />\n", -1)
+
+	result := strings.Replace(content, "\n", "<br />\n", -1)
+
+	pageCache.Set(rawContent, result)
+
+	return result
 }
 
 func loadStars(keyword string) []*Star {
@@ -461,6 +500,12 @@ func main() {
 	})
 
 	r := mux.NewRouter()
+
+	r.HandleFunc("/debug/pprof/", pprof.Index)
+	r.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
+	r.HandleFunc("/debug/pprof/profile", pprof.Profile)
+	r.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
+
 	r.HandleFunc("/", myHandler(topHandler))
 	r.HandleFunc("/initialize", myHandler(initializeHandler)).Methods("GET")
 	r.HandleFunc("/robots.txt", myHandler(robotsHandler))
