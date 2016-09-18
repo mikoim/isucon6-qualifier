@@ -26,6 +26,9 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/gorilla/sessions"
 	"github.com/unrolled/render"
+	"net"
+	"os/signal"
+	"syscall"
 )
 
 const (
@@ -477,7 +480,7 @@ func main() {
 
 	isutarEndpoint = os.Getenv("ISUTAR_ORIGIN")
 	if isutarEndpoint == "" {
-		isutarEndpoint = "http://localhost:5001"
+		isutarEndpoint = "http://localhost/stars"
 	}
 	isupamEndpoint = os.Getenv("ISUPAM_ORIGIN")
 	if isupamEndpoint == "" {
@@ -534,5 +537,27 @@ func main() {
 	k.Methods("POST").HandlerFunc(myHandler(keywordByKeywordDeleteHandler))
 
 	r.PathPrefix("/").Handler(http.FileServer(http.Dir("./public/")))
-	log.Fatal(http.ListenAndServe(":5000", r))
+
+	os.Remove("isuda.sock");
+
+	s, err := net.Listen("unix", "isuda.sock")
+	checkErr(err)
+
+	checkErr(os.Chmod("isuda.sock", 0777))
+
+	defer s.Close()
+
+	go func() {
+		log.Fatal(http.Serve(s, r))
+	}()
+
+	c := make(chan os.Signal, 1)
+	signal.Notify(c, os.Interrupt, os.Kill, syscall.SIGTERM)
+	log.Println(<-c)
+}
+
+func checkErr(err error) {
+	if err != nil {
+		panic(err)
+	}
 }
