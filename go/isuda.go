@@ -38,6 +38,7 @@ const (
 
 var keywordCache = cmap.New()
 var pageCache = cmap.New()
+var rawKeywordCache = cmap.New()
 
 var (
 	isutarEndpoint string
@@ -78,8 +79,37 @@ func authenticate(w http.ResponseWriter, r *http.Request) error {
 	return errInvalidUser
 }
 
+func setRawKeyword(keyword string, e Entry) {
+	log.Println(keyword)
+	rawKeywordCache.Set(keyword, e)
+}
+
+func deleteRawKeyword(keyword string) {
+	rawKeywordCache.Remove(keyword)
+}
+
+func getRawKeyword(keyword string) (Entry, bool) {
+	raw, exists := rawKeywordCache.Get(keyword)
+	if exists {
+		return raw.(Entry), true
+	}
+
+	row := db.QueryRow(`SELECT * FROM entry WHERE keyword = ?`, keyword)
+	e := Entry{}
+	var tmp int
+	err := row.Scan(&e.ID, &e.AuthorID, &e.Keyword, &e.Description, &e.UpdatedAt, &e.CreatedAt, tmp)
+	if err == sql.ErrNoRows {
+		return e, false
+	}
+
+	setRawKeyword(keyword, e)
+
+	return e, true
+}
+
 func initializeKeywordCache() {
 	keywordCache = cmap.New()
+	rawKeywordCache = cmap.New()
 
 	if keywordCache.Count() != 0 {
 		return
@@ -307,15 +337,14 @@ func keywordByKeywordHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	keyword := mux.Vars(r)["keyword"]
-	row := db.QueryRow(`SELECT * FROM entry WHERE keyword = ?`, keyword)
-	e := Entry{}
-	var tmp int
-	err := row.Scan(&e.ID, &e.AuthorID, &e.Keyword, &e.Description, &e.UpdatedAt, &e.CreatedAt, tmp)
-	if err == sql.ErrNoRows {
+	keyword, err := url.QueryUnescape(mux.Vars(r)["keyword"])
+	panicIf(err)
+	e, exists := getRawKeyword(keyword)
+	if !exists {
 		notFound(w)
 		return
 	}
+
 	e.Html = htmlify(w, r, e.Description)
 	e.Stars = loadStars(e.Keyword)
 
@@ -359,6 +388,7 @@ func keywordByKeywordDeleteHandler(w http.ResponseWriter, r *http.Request) {
 
 	pageCache = cmap.New()
 	keywordCache.Remove(keyword)
+	deleteRawKeyword(keyword)
 
 	http.Redirect(w, r, "/", http.StatusFound)
 }
