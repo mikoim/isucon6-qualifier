@@ -7,19 +7,19 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/moovweb/rubex"
+	"github.com/streamrail/concurrent-map"
 	"html"
 	"html/template"
 	"log"
 	"math"
 	"net/http"
+	"net/http/pprof"
 	"net/url"
 	"os"
 	"strconv"
 	"strings"
 	"unicode/utf8"
-	"github.com/streamrail/concurrent-map"
-	"net/http/pprof"
-	"github.com/moovweb/rubex"
 
 	"github.com/Songmu/strrand"
 	_ "github.com/go-sql-driver/mysql"
@@ -32,7 +32,7 @@ import (
 )
 
 const (
-	sessionName   = "isuda_session"
+	sessionName = "isuda_session"
 	sessionSecret = "tonymoris"
 )
 
@@ -85,7 +85,7 @@ func initializeKeywordCache() {
 		return
 	}
 
-	rows, err := db.Query(`	SELECT * FROM entry ORDER BY keyword_len DESC`)
+	rows, err := db.Query(`SELECT keyword FROM entry ORDER BY keyword_len DESC`)
 	panicIf(err)
 	entries := make([]*Entry, 0, 8000)
 	for rows.Next() {
@@ -102,7 +102,7 @@ func initializeKeywordCache() {
 	}
 }
 
-func isExistKeyword(keyword string) (bool){
+func isExistKeyword(keyword string) bool {
 	_, exitst := keywordCache.Get(keyword)
 	return exitst
 }
@@ -135,7 +135,7 @@ func topHandler(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := db.Query(fmt.Sprintf(
 		"SELECT * FROM entry ORDER BY updated_at DESC LIMIT %d OFFSET %d",
-		perPage, perPage*(page-1),
+		perPage, perPage * (page - 1),
 	))
 	if err != nil && err != sql.ErrNoRows {
 		panicIf(err)
@@ -143,7 +143,7 @@ func topHandler(w http.ResponseWriter, r *http.Request) {
 	entries := make([]*Entry, 0, 10)
 	for rows.Next() {
 		e := Entry{}
-		var tmp int;
+		var tmp int
 		err := rows.Scan(&e.ID, &e.AuthorID, &e.Keyword, &e.Description, &e.UpdatedAt, &e.CreatedAt, &tmp)
 		panicIf(err)
 		e.Html = htmlify(w, r, e.Description)
@@ -161,8 +161,8 @@ func topHandler(w http.ResponseWriter, r *http.Request) {
 
 	lastPage := int(math.Ceil(float64(totalEntries) / float64(perPage)))
 	pages := make([]int, 0, 10)
-	start := int(math.Max(float64(1), float64(page-5)))
-	end := int(math.Min(float64(lastPage), float64(page+5)))
+	start := int(math.Max(float64(1), float64(page - 5)))
+	end := int(math.Min(float64(lastPage), float64(page + 5)))
 	for i := start; i <= end; i++ {
 		pages = append(pages, i)
 	}
@@ -223,7 +223,6 @@ func keywordPostHandler(w http.ResponseWriter, r *http.Request) {
 	 * 更新は間に合うのか.
 	 */
 
-
 	http.Redirect(w, r, "/", http.StatusFound)
 }
 
@@ -246,7 +245,7 @@ func loginPostHandler(w http.ResponseWriter, r *http.Request) {
 	row := db.QueryRow(`SELECT * FROM user WHERE name = ?`, name)
 	user := User{}
 	err := row.Scan(&user.ID, &user.Name, &user.Salt, &user.Password, &user.CreatedAt)
-	if err == sql.ErrNoRows || user.Password != fmt.Sprintf("%x", sha1.Sum([]byte(user.Salt+r.FormValue("password")))) {
+	if err == sql.ErrNoRows || user.Password != fmt.Sprintf("%x", sha1.Sum([]byte(user.Salt + r.FormValue("password")))) {
 		forbidden(w)
 		return
 	}
@@ -296,7 +295,7 @@ func register(user string, pass string) int64 {
 	salt, err := strrand.RandomString(`....................`)
 	panicIf(err)
 	res, err := db.Exec(`INSERT INTO user (name, salt, password, created_at) VALUES (?, ?, ?, NOW())`,
-		user, salt, fmt.Sprintf("%x", sha1.Sum([]byte(salt+pass))))
+		user, salt, fmt.Sprintf("%x", sha1.Sum([]byte(salt + pass))))
 	panicIf(err)
 	lastInsertID, _ := res.LastInsertId()
 	return lastInsertID
@@ -349,7 +348,7 @@ func keywordByKeywordDeleteHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	row := db.QueryRow(`SELECT * FROM entry WHERE keyword = ?`, keyword)
 	e := Entry{}
-	var tmp int;
+	var tmp int
 	err := row.Scan(&e.ID, &e.AuthorID, &e.Keyword, &e.Description, &e.UpdatedAt, &e.CreatedAt, &tmp)
 	if err == sql.ErrNoRows {
 		notFound(w)
@@ -382,7 +381,7 @@ func htmlify(w http.ResponseWriter, r *http.Request, content string) string {
 		keywords = append(keywords, rubex.QuoteMeta(keyword))
 	}
 
-	re := rubex.MustCompile("("+strings.Join(keywords, "|")+")")
+	re := rubex.MustCompile("(" + strings.Join(keywords, "|") + ")")
 
 	kw2sha := make(map[string]string)
 	content = re.ReplaceAllStringFunc(content, func(kw string) string {
@@ -392,7 +391,7 @@ func htmlify(w http.ResponseWriter, r *http.Request, content string) string {
 
 	content = html.EscapeString(content)
 	for kw, hash := range kw2sha {
-		u, err := r.URL.Parse(baseUrl.String()+"/keyword/" + pathURIEscape(kw))
+		u, err := r.URL.Parse(baseUrl.String() + "/keyword/" + pathURIEscape(kw))
 		panicIf(err)
 		link := fmt.Sprintf("<a href=\"%s\">%s</a>", u, html.EscapeString(kw))
 		content = strings.Replace(content, hash, link, -1)
@@ -499,8 +498,12 @@ func main() {
 				"raw": func(text string) template.HTML {
 					return template.HTML(text)
 				},
-				"add": func(a, b int) int { return a + b },
-				"sub": func(a, b int) int { return a - b },
+				"add": func(a, b int) int {
+					return a + b
+				},
+				"sub": func(a, b int) int {
+					return a - b
+				},
 				"entry_with_ctx": func(entry Entry, ctx context.Context) *EntryWithCtx {
 					return &EntryWithCtx{Context: ctx, Entry: entry}
 				},
@@ -509,11 +512,6 @@ func main() {
 	})
 
 	r := mux.NewRouter()
-
-	r.HandleFunc("/debug/pprof/", pprof.Index)
-	r.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
-	r.HandleFunc("/debug/pprof/profile", pprof.Profile)
-	r.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
 
 	r.HandleFunc("/", myHandler(topHandler))
 	r.HandleFunc("/initialize", myHandler(initializeHandler)).Methods("GET")
@@ -536,6 +534,11 @@ func main() {
 	s := r.PathPrefix("/stars").Subrouter()
 	s.Methods("GET").HandlerFunc(myHandler(starsHandler))
 	s.Methods("POST").HandlerFunc(myHandler(starsPostHandler))
+
+	r.HandleFunc("/debug/pprof/", pprof.Index)
+	r.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
+	r.HandleFunc("/debug/pprof/profile", pprof.Profile)
+	r.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
 
 	r.PathPrefix("/").Handler(http.FileServer(http.Dir("./public/")))
 
@@ -567,7 +570,7 @@ func checkErr(err error) {
 
 /**/
 
-func getStars(keyword string) (*[]Star) {
+func getStars(keyword string) *[]Star {
 	rows, err := db.Query(`SELECT * FROM star WHERE keyword = ?`, keyword)
 	if err != nil && err != sql.ErrNoRows {
 		panicIf(err)
