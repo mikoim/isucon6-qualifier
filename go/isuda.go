@@ -542,12 +542,12 @@ func main() {
 
 	r.PathPrefix("/").Handler(http.FileServer(http.Dir("./public/")))
 
-	os.Remove("isuda.sock");
+	os.Remove("/tmp/isuda.sock")
 
-	sock, err := net.Listen("unix", "isuda.sock")
+	sock, err := net.Listen("unix", "/tmp/isuda.sock")
 	checkErr(err)
 
-	checkErr(os.Chmod("isuda.sock", 0777))
+	checkErr(os.Chmod("/tmp/isuda.sock", 0777))
 
 	defer sock.Close()
 
