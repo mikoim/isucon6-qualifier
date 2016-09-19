@@ -117,19 +117,13 @@ func initializeKeywordCache() {
 
 	rows, err := db.Query(`SELECT keyword FROM entry ORDER BY keyword_len DESC`)
 	panicIf(err)
-	entries := make([]*Entry, 0, 8000)
 	for rows.Next() {
 		e := Entry{}
-		var tmp int;
-		err := rows.Scan(&e.ID, &e.AuthorID, &e.Keyword, &e.Description, &e.UpdatedAt, &e.CreatedAt, &tmp)
+		err := rows.Scan(&e.Keyword)
 		panicIf(err)
-		entries = append(entries, &e)
+		keywordCache.Set(e.Keyword, 1)
 	}
 	rows.Close()
-
-	for _, entry := range entries {
-		keywordCache.Set(entry.Keyword, 1)
-	}
 }
 
 func isExistKeyword(keyword string) bool {
