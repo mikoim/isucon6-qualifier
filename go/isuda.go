@@ -165,15 +165,29 @@ func topHandler(w http.ResponseWriter, r *http.Request) {
 		panicIf(err)
 	}
 	entries := make([]*Entry, 0, 10)
+	entriesChannels := make([]<-chan *Entry, 0, 10)
+
 	for rows.Next() {
 		e := Entry{}
 		var tmp int
 		err := rows.Scan(&e.ID, &e.AuthorID, &e.Keyword, &e.Description, &e.UpdatedAt, &e.CreatedAt, &tmp)
 		panicIf(err)
-		e.Html = htmlify(w, r, e.Description)
-		e.Stars = loadStars(e.Keyword)
-		entries = append(entries, &e)
+
+		echan := make(chan *Entry,)
+		entriesChannels = append(entriesChannels, echan)
+
+		go func(echan chan<- *Entry) {
+			e.Html = htmlify(w, r, e.Description)
+			e.Stars = loadStars(e.Keyword)
+			echan <- &e
+		}(echan);
 	}
+
+	for _, echan := range entriesChannels {
+		e := <- echan
+		entries = append(entries, e)
+	}
+
 	rows.Close()
 
 	var totalEntries int
