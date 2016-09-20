@@ -120,7 +120,7 @@ func initializeKeywordCache() {
 		e := Entry{}
 		err := rows.Scan(&e.Keyword)
 		panicIf(err)
-		keywordCache.Set(e.Keyword, 1)
+		keywordCache.Set(e.Keyword, rubex.QuoteMeta(e.Keyword))
 	}
 	rows.Close()
 }
@@ -243,7 +243,7 @@ func keywordPostHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	/* Insert into cache first */
-	keywordCache.Set(keyword, 1)
+	keywordCache.Set(keyword, rubex.QuoteMeta(keyword))
 	pageCache = cmap.New()
 
 	/* Then insert into DB */
@@ -415,7 +415,10 @@ func htmlify(w http.ResponseWriter, r *http.Request, content string) string {
 	keywords := make([]string, 0, 500)
 
 	for _, keyword := range keywordCache.Keys() {
-		keywords = append(keywords, rubex.QuoteMeta(keyword))
+		qk, exist := keywordCache.Get(keyword)
+		if exist {
+			keywords = append(keywords, qk.(string))
+		}
 	}
 
 	re := rubex.MustCompile("(" + strings.Join(keywords, "|") + ")")
