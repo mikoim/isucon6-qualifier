@@ -80,7 +80,6 @@ func authenticate(w http.ResponseWriter, r *http.Request) error {
 }
 
 func setRawKeyword(keyword string, e Entry) {
-	log.Println(keyword)
 	rawKeywordCache.Set(keyword, e)
 }
 
