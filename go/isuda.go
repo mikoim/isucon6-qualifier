@@ -32,7 +32,7 @@ import (
 )
 
 const (
-	sessionName = "isuda_session"
+	sessionName   = "isuda_session"
 	sessionSecret = "tonymoris"
 )
 
@@ -158,7 +158,7 @@ func topHandler(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := db.Query(fmt.Sprintf(
 		"SELECT * FROM entry ORDER BY updated_at DESC LIMIT %d OFFSET %d",
-		perPage, perPage * (page - 1),
+		perPage, perPage*(page-1),
 	))
 	if err != nil && err != sql.ErrNoRows {
 		panicIf(err)
@@ -172,18 +172,18 @@ func topHandler(w http.ResponseWriter, r *http.Request) {
 		err := rows.Scan(&e.ID, &e.AuthorID, &e.Keyword, &e.Description, &e.UpdatedAt, &e.CreatedAt, &tmp)
 		panicIf(err)
 
-		echan := make(chan *Entry,)
+		echan := make(chan *Entry)
 		entriesChannels = append(entriesChannels, echan)
 
 		go func(echan chan<- *Entry) {
 			e.Html = htmlify(w, r, e.Description)
 			e.Stars = loadStars(e.Keyword)
 			echan <- &e
-		}(echan);
+		}(echan)
 	}
 
 	for _, echan := range entriesChannels {
-		e := <- echan
+		e := <-echan
 		entries = append(entries, e)
 	}
 
@@ -198,8 +198,8 @@ func topHandler(w http.ResponseWriter, r *http.Request) {
 
 	lastPage := int(math.Ceil(float64(totalEntries) / float64(perPage)))
 	pages := make([]int, 0, 10)
-	start := int(math.Max(float64(1), float64(page - 5)))
-	end := int(math.Min(float64(lastPage), float64(page + 5)))
+	start := int(math.Max(float64(1), float64(page-5)))
+	end := int(math.Min(float64(lastPage), float64(page+5)))
 	for i := start; i <= end; i++ {
 		pages = append(pages, i)
 	}
@@ -282,7 +282,7 @@ func loginPostHandler(w http.ResponseWriter, r *http.Request) {
 	row := db.QueryRow(`SELECT * FROM user WHERE name = ?`, name)
 	user := User{}
 	err := row.Scan(&user.ID, &user.Name, &user.Salt, &user.Password, &user.CreatedAt)
-	if err == sql.ErrNoRows || user.Password != fmt.Sprintf("%x", sha1.Sum([]byte(user.Salt + r.FormValue("password")))) {
+	if err == sql.ErrNoRows || user.Password != fmt.Sprintf("%x", sha1.Sum([]byte(user.Salt+r.FormValue("password")))) {
 		forbidden(w)
 		return
 	}
@@ -332,7 +332,7 @@ func register(user string, pass string) int64 {
 	salt, err := strrand.RandomString(`....................`)
 	panicIf(err)
 	res, err := db.Exec(`INSERT INTO user (name, salt, password, created_at) VALUES (?, ?, ?, NOW())`,
-		user, salt, fmt.Sprintf("%x", sha1.Sum([]byte(salt + pass))))
+		user, salt, fmt.Sprintf("%x", sha1.Sum([]byte(salt+pass))))
 	panicIf(err)
 	lastInsertID, _ := res.LastInsertId()
 	return lastInsertID
@@ -412,7 +412,7 @@ func htmlify(w http.ResponseWriter, r *http.Request, content string) string {
 		return cachedPage.(string)
 	}
 
-	keywords := make([]string, 0, 500)
+	keywords := make([]string, 0, 10000)
 
 	for _, keyword := range keywordCache.Keys() {
 		qk, exist := keywordCache.Get(keyword)
@@ -421,8 +421,10 @@ func htmlify(w http.ResponseWriter, r *http.Request, content string) string {
 		}
 	}
 
+	// ToDo: can't cache compiled regex caused by rubex data structure
 	re := rubex.MustCompile("(" + strings.Join(keywords, "|") + ")")
 
+	// ToDo: ReplaceAllStringFunc is too heavy (it consume a lot of time)
 	kw2sha := make(map[string]string)
 	content = re.ReplaceAllStringFunc(content, func(kw string) string {
 		kw2sha[kw] = "isuda_" + fmt.Sprintf("%x", sha1.Sum([]byte(kw)))
