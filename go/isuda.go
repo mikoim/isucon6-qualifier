@@ -138,6 +138,7 @@ func initializeHandler(w http.ResponseWriter, r *http.Request) {
 	panicIf(err)
 
 	pageCache = cmap.New()
+	rawKeywordCache = cmap.New()
 	initializeKeywordCache()
 
 	re.JSON(w, http.StatusOK, map[string]string{"result": "ok"})
